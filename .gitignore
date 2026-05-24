@@ -1,5 +1,38 @@
+# Python
 __pycache__/
 *.pyc
+*.pyo
+*.pyd
+
+# Virtual Environment
+venv/
 .env
-node_modules/
+
+# Jupyter
 .ipynb_checkpoints/
+
+# Node.js
+node_modules/
+.next/
+out/
+
+# Logs
+*.log
+
+# OS Files
+.DS_Store
+Thumbs.db
+
+# VS Code
+.vscode/
+
+# Models (optional)
+# models/
+
+# Vector DB
+# vector_store/
+
+# Environment Variables
+.env.local
+.env.development.local
+.env.production.local
