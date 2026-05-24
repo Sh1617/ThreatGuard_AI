@@ -1,0 +1,25 @@
+PortScan Attack
+
+Description:
+Port scanning is a reconnaissance technique used to identify open ports and services on a target system.
+
+Indicators:
+- Sequential connection attempts
+- High number of port requests
+- Short-duration TCP connections
+- Unusual scanning behavior
+
+Impact:
+- Information gathering
+- Exposure of vulnerable services
+- Pre-attack reconnaissance
+
+Mitigation:
+- Firewall rules
+- Intrusion Detection Systems
+- Port filtering
+- Rate limiting
+- Network monitoring
+
+MITRE ATT&CK:
+T1046 - Network Service Discovery

@@ -1,5 +1,11 @@
 from fastapi import FastAPI
+
 from pydantic import BaseModel
+
+from inference import (
+    predict_attack,
+    get_supported_attacks
+)
 
 from langchain_community.vectorstores import FAISS
 
@@ -7,24 +13,26 @@ from langchain_huggingface import HuggingFaceEmbeddings
 
 from langchain_ollama import OllamaLLM
 
-from inference import predict_attack
 
 
-# Initialize FastAPI
-app = FastAPI()
+app = FastAPI(
+    title="ThreatGuard AI",
+    description="AI-Powered Cyber Threat Intelligence Platform",
+    version="1.0.0"
+)
 
 
-# Load local LLM
+
 llm = OllamaLLM(model="llama3")
 
 
-# Load embedding model
+
 embedding_model = HuggingFaceEmbeddings(
     model_name="sentence-transformers/paraphrase-MiniLM-L3-v2"
 )
 
 
-# Load FAISS vector database
+
 vectorstore = FAISS.load_local(
     "../vector_store",
     embedding_model,
@@ -32,17 +40,16 @@ vectorstore = FAISS.load_local(
 )
 
 
-# Request model for RAG analysis
+
 class QueryRequest(BaseModel):
     query: str
 
 
-# Request model for ML prediction
 class PredictionRequest(BaseModel):
     data: dict
 
 
-# Home route
+
 @app.get("/")
 def home():
 
@@ -51,7 +58,48 @@ def home():
     }
 
 
-# RAG Investigation Endpoint
+@app.get("/health")
+def health():
+
+    return {
+        "status": "healthy",
+        "llm": "llama3",
+        "vector_db": "FAISS",
+        "backend": "FastAPI"
+    }
+
+
+@app.get("/attacks")
+def attacks():
+
+    return {
+        "supported_attacks": get_supported_attacks()
+    }
+
+
+@app.get("/model-info")
+def model_info():
+
+    return {
+        "model": "XGBoost Multi-Attack Classifier",
+        "embedding_model": "MiniLM-L3-v2",
+        "llm": "llama3",
+        "vector_database": "FAISS"
+    }
+
+
+@app.post("/predict")
+def predict(request: PredictionRequest):
+
+    attack = predict_attack(
+        request.data
+    )
+
+    return {
+        "prediction": attack
+    }
+
+
 @app.post("/analyze")
 def analyze(request: QueryRequest):
 
@@ -83,17 +131,4 @@ def analyze(request: QueryRequest):
     return {
         "query": query,
         "report": response
-    }
-
-
-# ML Prediction Endpoint
-@app.post("/predict")
-def predict(request: PredictionRequest):
-
-    attack = predict_attack(
-        request.data
-    )
-
-    return {
-        "prediction": attack
     }

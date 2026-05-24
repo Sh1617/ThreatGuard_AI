@@ -1,0 +1,32 @@
+Web Attack
+
+Description:
+Web attacks target web applications using malicious requests and payloads.
+
+Common Types:
+- Brute Force
+- Command Injection
+- Directory Traversal
+- Malicious Requests
+
+Indicators:
+- Suspicious HTTP requests
+- Unusual URL patterns
+- Repeated login attempts
+- Abnormal request payloads
+
+Impact:
+- Unauthorized access
+- Data leakage
+- Application compromise
+- Credential theft
+
+Mitigation:
+- Web Application Firewall
+- Input validation
+- Rate limiting
+- Secure authentication
+- Request filtering
+
+MITRE ATT&CK:
+T1190 - Exploit Public-Facing Application

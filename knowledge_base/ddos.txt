@@ -1,19 +1,25 @@
 DDoS Attack
 
 Description:
-Distributed Denial of Service attacks overwhelm a target system with massive traffic.
+Distributed Denial of Service attacks overwhelm a target system with massive traffic from multiple sources.
 
 Indicators:
-- Extremely high traffic volume
-- Repeated malicious requests
+- Extremely high incoming traffic
+- Repeated requests from many IPs
+- Slow network response
+- Service downtime
+
+Impact:
+- Server unavailability
 - Network congestion
-- Service slowdown
+- Resource exhaustion
 
 Mitigation:
 - Rate limiting
-- Traffic filtering
-- CDN protection
 - Web Application Firewall
+- CDN protection
+- Traffic filtering
+- Load balancing
 
 MITRE ATT&CK:
 T1498 - Network Denial of Service

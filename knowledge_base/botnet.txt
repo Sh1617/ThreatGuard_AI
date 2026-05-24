@@ -1,0 +1,26 @@
+Botnet Attack
+
+Description:
+Botnets are networks of compromised devices controlled remotely to perform malicious activities.
+
+Indicators:
+- Command-and-control communication
+- Unusual outbound traffic
+- Repeated beaconing behavior
+- Distributed malicious activity
+
+Impact:
+- DDoS attacks
+- Spam campaigns
+- Malware distribution
+- Credential theft
+
+Mitigation:
+- Endpoint protection
+- Network segmentation
+- Traffic analysis
+- Threat intelligence monitoring
+- Device isolation
+
+MITRE ATT&CK:
+T1071 - Application Layer Protocol
