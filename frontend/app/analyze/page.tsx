@@ -4,7 +4,7 @@ import { useState } from "react";
 import { useTheme } from "../components/theme-context";
 import Navbar from "../components/Navbar";
 
-const API = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+const API = "/api";  // proxied by next.config.ts → http://localhost:8000
 
 interface AnalyzeResult {
   query: string;

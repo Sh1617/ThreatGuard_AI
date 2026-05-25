@@ -4,7 +4,7 @@ import { useState } from "react";
 import { useTheme } from "../components/theme-context";
 import Navbar from "../components/Navbar";
 
-const API = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+const API = "/api";  // proxied by next.config.ts → http://localhost:8000
 
 interface PredictionResult {
   prediction: string;
@@ -346,7 +346,7 @@ export default function PredictPage() {
             {/* API tip */}
             <div style={{ border: `1px solid ${cardBorder}`, borderRadius: 4, padding: 16, background: cardBg, fontSize: 11, opacity: 0.5, lineHeight: 1.8 }}>
               <div style={{ marginBottom: 6, letterSpacing: "0.1em", opacity: 0.7 }}>ENDPOINT</div>
-              <code>POST {API}/predict</code><br />
+              <code>POST http://localhost:8000/predict</code><br />
               <code>Body: &#123;"data": &#123;...features&#125;&#125;</code>
             </div>
           </div>
