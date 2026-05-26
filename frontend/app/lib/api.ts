@@ -1,20 +1,29 @@
 /**
- * api.ts
+ * api.ts  (v1.2)
  * Centralised API utilities for ThreatGuard AI frontend.
  *
- * Provides:
- *  - fetchWithTimeout: fetch wrapper with AbortController timeout
- *  - classifyError: maps network/HTTP errors to user-friendly messages
- *  - callPredict / callAnalyze: typed wrappers for the two backend endpoints
+ * FIX (v1.2):
+ *  - ANALYZE_TIMEOUT_MS raised to 95s (backend timeout is 80s, so frontend
+ *    waits 15s longer and always sees a clean HTTP 500 rather than ECONNRESET).
+ *  - classifyFetchError now also catches "load failed" (Safari) and
+ *    "net::ERR_CONNECTION_REFUSED" (Chrome when backend is down).
+ *  - callAnalyze surfaces the backend's detail message verbatim for 500 errors
+ *    so users see "LLM timed out after 80s" instead of generic "HTTP 500".
  */
 
 const BASE = "/api"; // proxied by next.config.ts → http://localhost:8000
 
-/** Default timeout in ms — long enough for LLaMA3, short enough to fail fast */
-export const ANALYZE_TIMEOUT_MS = 90_000; // 90 s
+/** 
+ * FIX: 95s — must be LONGER than backend OllamaLLM timeout (80s).
+ * If frontend times out first, the browser closes the socket and the backend
+ * sees a broken pipe, causing misleading ECONNRESET logs on both sides.
+ * With 95s frontend / 80s backend, the backend always responds first with
+ * a clean HTTP 500 and an actionable error message.
+ */
+export const ANALYZE_TIMEOUT_MS = 95_000; // 95 s  ← was 90s
 export const PREDICT_TIMEOUT_MS = 15_000; // 15 s
 
-// ─── Generic fetch with timeout ────────────────────────────────────────────
+// ─── Generic fetch with timeout ─────────────────────────────────────────────
 
 export async function fetchWithTimeout(
   url: string,
@@ -37,7 +46,7 @@ export async function fetchWithTimeout(
   }
 }
 
-// ─── Typed errors ───────────────────────────────────────────────────────────
+// ─── Typed errors ────────────────────────────────────────────────────────────
 
 export class TimeoutError extends Error {
   constructor(ms: number) {
@@ -74,23 +83,25 @@ export class ConnectionResetError extends Error {
 function classifyFetchError(err: unknown): Error {
   if (err instanceof Error) {
     const msg = err.message.toLowerCase();
+
+    if (msg.includes("econnreset") || msg.includes("socket hang up")) {
+      return new ConnectionResetError();
+    }
+
+    // FIX: also catch Safari ("load failed") and Chrome when backend is down
     if (
-      msg.includes("econnreset") ||
-      msg.includes("socket hang up") ||
+      msg.includes("failed to fetch") ||
       msg.includes("network error") ||
-      msg.includes("failed to fetch")
+      msg.includes("load failed") ||
+      msg.includes("err_connection_refused")
     ) {
-      // Could be ECONNRESET or backend not running
-      if (msg.includes("econnreset") || msg.includes("socket hang up")) {
-        return new ConnectionResetError();
-      }
       return new BackendUnavailableError();
     }
   }
   return err instanceof Error ? err : new Error(String(err));
 }
 
-// ─── /predict ───────────────────────────────────────────────────────────────
+// ─── /predict ────────────────────────────────────────────────────────────────
 
 export interface PredictRequest {
   data: Record<string, number>;
@@ -112,13 +123,18 @@ export async function callPredict(data: Record<string, number>): Promise<Predict
   );
 
   if (!res.ok) {
-    throw new Error(`Prediction failed — server returned HTTP ${res.status}`);
+    let detail = `Prediction failed — server returned HTTP ${res.status}`;
+    try {
+      const body = await res.json();
+      if (body?.detail) detail = body.detail;
+    } catch { /* ignore */ }
+    throw new Error(detail);
   }
 
   return res.json() as Promise<PredictResponse>;
 }
 
-// ─── /analyze ───────────────────────────────────────────────────────────────
+// ─── /analyze ────────────────────────────────────────────────────────────────
 
 export interface AnalyzeRequest {
   query: string;
@@ -141,14 +157,14 @@ export async function callAnalyze(query: string): Promise<AnalyzeResponse> {
   );
 
   if (!res.ok) {
-    let detail = `HTTP ${res.status}`;
+    // FIX: surface the backend's detail message verbatim so users see
+    // "LLM timed out after 80s" instead of the generic "HTTP 500".
+    let detail = `Analysis failed — HTTP ${res.status}`;
     try {
       const body = await res.json();
       if (body?.detail) detail = body.detail;
-    } catch {
-      // ignore parse errors
-    }
-    throw new Error(`Analysis failed — ${detail}`);
+    } catch { /* ignore parse errors */ }
+    throw new Error(detail);
   }
 
   const json = await res.json() as AnalyzeResponse;

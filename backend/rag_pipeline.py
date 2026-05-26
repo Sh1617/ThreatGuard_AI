@@ -57,29 +57,37 @@ query = "How to detect port scanning attacks?"
 
 results = vectorstore.similarity_search(
     query,
-    k=2
+    k=1
 )
 
 
+
+#context = "\n".join(
+#    [doc.page_content for doc in results]
+#)
 
 context = "\n".join(
-    [doc.page_content for doc in results]
+    [doc.page_content[:500] for doc in results]
 )
+
+
 
 
 
 prompt = f"""
-You are a cybersecurity threat analyst.
+You are a cybersecurity analyst.
 
-Generate a professional investigation report.
-
-Context:
+Attack Context:
 {context}
 
-Question:
+User Query:
 {query}
-"""
 
+Generate concise investigation report with:
+- attack summary
+- severity
+- mitigation
+"""
 
 
 response = llm.invoke(prompt)
