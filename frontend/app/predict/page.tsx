@@ -4,15 +4,16 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { useTheme } from "../components/theme-context";
 import Navbar from "../components/Navbar";
-import {
-  savePredictionContext,
-} from "../lib/prediction-store";
+import { savePredictionContext, HIGHLIGHT_FEATURE_KEYS } from "../lib/prediction-store";
+import { callPredict } from "../lib/api";
 
-const API = "/api"; // proxied by next.config.ts → http://localhost:8000
+// ─── Types ──────────────────────────────────────────────────────────────────
 
 interface PredictionResult {
   prediction: string;
 }
+
+// ─── Constants ──────────────────────────────────────────────────────────────
 
 const PRESETS: Record<string, { label: string; data: Record<string, number> }> = {
   ddos: {
@@ -65,39 +66,43 @@ const PRESETS: Record<string, { label: string; data: Record<string, number> }> =
   },
 };
 
-const RESULT_COLORS: Record<string, { color: string; darkColor: string; label: string; icon: string }> = {
-  DDoS:      { color: "#cc0000", darkColor: "#ff6b6b", label: "DDoS Attack",     icon: "⚡" },
-  Botnet:    { color: "#9f1239", darkColor: "#fda4af", label: "Botnet Activity", icon: "🕸️" },
-  PortScan:  { color: "#996600", darkColor: "#ffd580", label: "Port Scan",        icon: "🔍" },
-  WebAttack: { color: "#7c2d12", darkColor: "#fb923c", label: "Web Attack",       icon: "🌐" },
+const ATTACK_META: Record<string, { color: string; darkColor: string; label: string; icon: string; severity: string }> = {
+  DDoS:      { color: "#cc0000", darkColor: "#ff6b6b", label: "DDoS Attack",     icon: "⚡", severity: "CRITICAL" },
+  Botnet:    { color: "#9f1239", darkColor: "#fda4af", label: "Botnet Activity", icon: "🕸️", severity: "HIGH" },
+  PortScan:  { color: "#996600", darkColor: "#ffd580", label: "Port Scan",        icon: "🔍", severity: "MEDIUM" },
+  WebAttack: { color: "#7c2d12", darkColor: "#fb923c", label: "Web Attack",       icon: "🌐", severity: "HIGH" },
+};
+
+const SEVERITY_COLOR: Record<string, string> = {
+  CRITICAL: "#ff4444",
+  HIGH:     "#ff8800",
+  MEDIUM:   "#ffcc00",
+  LOW:      "#44cc44",
 };
 
 const FIELDS = [
-  { key: "flow_duration",              label: "Flow Duration (ms)" },
-  { key: "total_fwd_packets",          label: "Total Fwd Packets" },
-  { key: "total_backward_packets",     label: "Total Bwd Packets" },
-  { key: "total_length_fwd_packets",   label: "Total Fwd Length (bytes)" },
-  { key: "total_length_bwd_packets",   label: "Total Bwd Length (bytes)" },
-  { key: "fwd_packet_length_max",      label: "Fwd Pkt Length Max" },
-  { key: "fwd_packet_length_min",      label: "Fwd Pkt Length Min" },
-  { key: "fwd_packet_length_mean",     label: "Fwd Pkt Length Mean" },
-  { key: "bwd_packet_length_max",      label: "Bwd Pkt Length Max" },
-  { key: "flow_bytes_s",               label: "Flow Bytes/s" },
-  { key: "flow_packets_s",             label: "Flow Packets/s" },
-  { key: "flow_iat_mean",              label: "Flow IAT Mean (ms)" },
-  { key: "fwd_iat_total",              label: "Fwd IAT Total" },
-  { key: "bwd_iat_total",              label: "Bwd IAT Total" },
-  { key: "fin_flag_count",             label: "FIN Flag Count" },
-  { key: "syn_flag_count",             label: "SYN Flag Count" },
-  { key: "rst_flag_count",             label: "RST Flag Count" },
-  { key: "psh_flag_count",             label: "PSH Flag Count" },
-  { key: "ack_flag_count",             label: "ACK Flag Count" },
+  { key: "flow_duration",            label: "Flow Duration (ms)" },
+  { key: "total_fwd_packets",        label: "Total Fwd Packets" },
+  { key: "total_backward_packets",   label: "Total Bwd Packets" },
+  { key: "total_length_fwd_packets", label: "Total Fwd Length (bytes)" },
+  { key: "total_length_bwd_packets", label: "Total Bwd Length (bytes)" },
+  { key: "fwd_packet_length_max",    label: "Fwd Pkt Length Max" },
+  { key: "fwd_packet_length_min",    label: "Fwd Pkt Length Min" },
+  { key: "fwd_packet_length_mean",   label: "Fwd Pkt Length Mean" },
+  { key: "bwd_packet_length_max",    label: "Bwd Pkt Length Max" },
+  { key: "flow_bytes_s",             label: "Flow Bytes/s" },
+  { key: "flow_packets_s",           label: "Flow Packets/s" },
+  { key: "flow_iat_mean",            label: "Flow IAT Mean (ms)" },
+  { key: "fwd_iat_total",            label: "Fwd IAT Total" },
+  { key: "bwd_iat_total",            label: "Bwd IAT Total" },
+  { key: "fin_flag_count",           label: "FIN Flag Count" },
+  { key: "syn_flag_count",           label: "SYN Flag Count" },
+  { key: "rst_flag_count",           label: "RST Flag Count" },
+  { key: "psh_flag_count",           label: "PSH Flag Count" },
+  { key: "ack_flag_count",           label: "ACK Flag Count" },
 ];
 
-const HIGHLIGHT_FIELDS = [
-  "flow_duration", "total_fwd_packets", "syn_flag_count",
-  "flow_packets_s", "flow_bytes_s", "psh_flag_count",
-];
+// ─── Component ──────────────────────────────────────────────────────────────
 
 export default function PredictPage() {
   const { dark } = useTheme();
@@ -108,11 +113,16 @@ export default function PredictPage() {
   const [loading, setLoading]   = useState(false);
   const [error, setError]       = useState<string | null>(null);
   const [activePreset, setActivePreset] = useState<string>("ddos");
+  const [navigating, setNavigating]     = useState(false);
 
+  // ── Theme tokens ────────────────────────────────────────────────────────
   const accent     = dark ? "#63ffb4" : "#0f7a4e";
   const cardBorder = dark ? "rgba(255,255,255,0.07)" : "rgba(0,0,0,0.09)";
   const cardBg     = dark ? "rgba(255,255,255,0.02)" : "rgba(0,0,0,0.02)";
   const inputBg    = dark ? "rgba(255,255,255,0.04)" : "rgba(0,0,0,0.04)";
+  const textMuted  = dark ? "#a0aec0" : "#4a5568";
+
+  // ── Helpers ─────────────────────────────────────────────────────────────
 
   const applyPreset = (key: string) => {
     setActivePreset(key);
@@ -125,18 +135,14 @@ export default function PredictPage() {
     setFormData((prev) => ({ ...prev, [key]: parseFloat(val) || 0 }));
   };
 
+  // ── Predict ─────────────────────────────────────────────────────────────
+
   const handleSubmit = async () => {
     setLoading(true);
     setError(null);
     setResult(null);
     try {
-      const res = await fetch(`${API}/predict`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ data: formData }),
-      });
-      if (!res.ok) throw new Error(`Server returned ${res.status}`);
-      const json = await res.json();
+      const json = await callPredict(formData);
       setResult(json);
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : "Failed to connect to backend.");
@@ -145,91 +151,220 @@ export default function PredictPage() {
     }
   };
 
-  // ── Save context → navigate to /analyze ────────────────────────────────────
+  // ── Navigate to /analyze with compact context ────────────────────────────
+  //
+  // FIX: We only persist the 6 "highlight" features in keyFeatures.
+  // The full 19-feature dump is kept in allFeatures for UI display only
+  // and is NEVER sent to the AI prompt — that's what caused ECONNRESET.
+
   const handleViewThreatDetails = () => {
     if (!result) return;
-    const meta = RESULT_COLORS[result.prediction] || {
-      label: result.prediction, icon: "⚠️", color: accent, darkColor: accent,
+    setNavigating(true);
+
+    const meta = ATTACK_META[result.prediction] ?? {
+      label: result.prediction,
+      icon: "⚠️",
+      color: accent,
+      darkColor: accent,
+      severity: "UNKNOWN",
     };
+
+    // Build compact keyFeatures — only HIGHLIGHT_FEATURE_KEYS
+    const keyFeatures: Partial<Record<typeof HIGHLIGHT_FEATURE_KEYS[number], number>> = {};
+    for (const k of HIGHLIGHT_FEATURE_KEYS) {
+      if (formData[k] !== undefined) {
+        keyFeatures[k] = formData[k];
+      }
+    }
+
     savePredictionContext({
       prediction: result.prediction,
       label:      meta.label,
-      features:   formData,
+      keyFeatures,
+      allFeatures: formData,
       timestamp:  Date.now(),
     });
+
     router.push("/analyze");
   };
 
   const resultMeta = result
-    ? (RESULT_COLORS[result.prediction] || { color: accent, darkColor: accent, label: result.prediction, icon: "⚠️" })
+    ? (ATTACK_META[result.prediction] ?? {
+        color: accent,
+        darkColor: accent,
+        label: result.prediction,
+        icon: "⚠️",
+        severity: "UNKNOWN",
+      })
     : null;
+
+  // ── Render ───────────────────────────────────────────────────────────────
 
   return (
     <>
       <style>{`
         @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@300;400;500;600&family=Space+Grotesk:wght@400;500;600;700&display=swap');
-        * { box-sizing: border-box; margin: 0; padding: 0; }
-        .section-label { font-size: 11px; letter-spacing: 0.15em; text-transform: uppercase; opacity: 0.45; margin-bottom: 14px; font-family: 'IBM Plex Mono', monospace; }
-        .field-input { width: 100%; background: ${inputBg}; border: 1px solid ${cardBorder}; border-radius: 3px; padding: 8px 12px; font-size: 13px; font-family: 'IBM Plex Mono', monospace; color: inherit; outline: none; transition: border-color 0.15s; }
+        *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+        .section-label {
+          font-size: 11px; letter-spacing: 0.15em; text-transform: uppercase;
+          opacity: 0.45; margin-bottom: 14px; font-family: 'IBM Plex Mono', monospace;
+        }
+        .field-input {
+          width: 100%; background: ${inputBg}; border: 1px solid ${cardBorder};
+          border-radius: 3px; padding: 8px 12px; font-size: 13px;
+          font-family: 'IBM Plex Mono', monospace; color: inherit;
+          outline: none; transition: border-color 0.15s;
+        }
         .field-input:focus { border-color: ${accent}; }
-        .preset-btn { font-family: 'IBM Plex Mono', monospace; font-size: 11px; letter-spacing: 0.08em; padding: 7px 14px; border-radius: 3px; border: 1px solid; cursor: pointer; transition: all 0.15s; }
-        .submit-btn { width: 100%; padding: 14px; border-radius: 4px; border: none; font-family: 'IBM Plex Mono', monospace; font-size: 13px; letter-spacing: 0.1em; cursor: pointer; transition: all 0.2s; font-weight: 500; }
-        .submit-btn:hover { opacity: 0.9; transform: translateY(-1px); }
-        .investigate-btn { width: 100%; padding: 14px; border-radius: 4px; font-family: 'IBM Plex Mono', monospace; font-size: 13px; letter-spacing: 0.08em; cursor: pointer; transition: all 0.2s; font-weight: 500; border: 1px solid; display: flex; align-items: center; justify-content: center; gap: 10px; }
-        .investigate-btn:hover { opacity: 0.85; transform: translateY(-1px); }
-        .stat-row { display: flex; justify-content: space-between; align-items: center; padding: 7px 0; border-bottom: 1px solid; font-size: 12px; }
+        .field-input::-webkit-outer-spin-button,
+        .field-input::-webkit-inner-spin-button { -webkit-appearance: none; }
+
+        .preset-btn {
+          font-family: 'IBM Plex Mono', monospace; font-size: 11px;
+          letter-spacing: 0.08em; padding: 7px 14px; border-radius: 3px;
+          border: 1px solid; cursor: pointer; transition: all 0.15s;
+        }
+        .preset-btn:hover { transform: translateY(-1px); }
+
+        .submit-btn {
+          width: 100%; padding: 14px; border-radius: 4px; border: none;
+          font-family: 'IBM Plex Mono', monospace; font-size: 13px;
+          letter-spacing: 0.1em; cursor: pointer; transition: all 0.2s; font-weight: 500;
+        }
+        .submit-btn:hover:not(:disabled) { opacity: 0.9; transform: translateY(-1px); }
+        .submit-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+        .investigate-btn {
+          width: 100%; padding: 14px; border-radius: 4px;
+          font-family: 'IBM Plex Mono', monospace; font-size: 13px;
+          letter-spacing: 0.08em; cursor: pointer; transition: all 0.2s;
+          font-weight: 500; border: 1px solid;
+          display: flex; align-items: center; justify-content: center; gap: 10px;
+        }
+        .investigate-btn:hover:not(:disabled) { opacity: 0.85; transform: translateY(-1px); }
+        .investigate-btn:disabled { opacity: 0.6; cursor: not-allowed; }
+
+        .stat-row {
+          display: flex; justify-content: space-between; align-items: center;
+          padding: 6px 0; border-bottom: 1px solid; font-size: 12px; font-family: 'IBM Plex Mono', monospace;
+        }
         .stat-row:last-child { border-bottom: none; }
+
+        .error-box {
+          border-radius: 4px; padding: 14px 16px; font-size: 12px;
+          font-family: 'IBM Plex Mono', monospace; line-height: 1.6;
+          display: flex; gap: 10px; align-items: flex-start;
+        }
+
         @keyframes fadeIn  { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
         @keyframes spin    { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
-        @keyframes pulse   { 0%,100% { opacity:1; } 50% { opacity:0.4; } }
-        .result-card { animation: fadeIn 0.3s ease; }
+        @keyframes pulse   { 0%,100% { opacity:1; } 50% { opacity:0.3; } }
+        @keyframes shimmer { 0% { background-position: -200% 0; } 100% { background-position: 200% 0; } }
+
+        .result-card { animation: fadeIn 0.35s ease; }
+
+        .severity-badge {
+          font-size: 10px; font-family: 'IBM Plex Mono', monospace;
+          letter-spacing: 0.12em; padding: 3px 8px; border-radius: 2px; font-weight: 600;
+        }
+
+        .compact-note {
+          font-size: 10px; opacity: 0.35; text-align: center;
+          letter-spacing: 0.04em; font-family: 'IBM Plex Mono', monospace;
+          line-height: 1.6;
+        }
       `}</style>
 
       <Navbar />
 
-      <main style={{ paddingTop: 80, paddingBottom: 60, paddingLeft: 40, paddingRight: 40, maxWidth: 1100, margin: "0 auto" }}>
+      <main style={{
+        paddingTop: 80, paddingBottom: 60,
+        paddingLeft: 40, paddingRight: 40,
+        maxWidth: 1100, margin: "0 auto",
+      }}>
+
+        {/* ── Page header ── */}
         <div style={{ marginTop: 20, marginBottom: 32 }}>
           <p className="section-label">ML Classification — POST /predict</p>
-          <h1 style={{ fontFamily: "'Space Grotesk', sans-serif", fontSize: 32, fontWeight: 700, letterSpacing: "-0.02em" }}>
+          <h1 style={{
+            fontFamily: "'Space Grotesk', sans-serif",
+            fontSize: 32, fontWeight: 700, letterSpacing: "-0.02em",
+          }}>
             Attack Predictor
           </h1>
-          <p style={{ fontSize: 13, opacity: 0.55, marginTop: 8, maxWidth: 560 }}>
-            Submit network traffic features to the XGBoost classifier. After prediction, generate a full AI investigation report with one click.
+          <p style={{ fontSize: 13, opacity: 0.55, marginTop: 8, maxWidth: 560, lineHeight: 1.6 }}>
+            Submit network traffic features to the XGBoost classifier. After prediction, generate a focused AI investigation report with one click.
           </p>
         </div>
 
-        {/* Presets */}
+        {/* ── Presets ── */}
         <div style={{ marginBottom: 28 }}>
           <p className="section-label">Quick Presets</p>
           <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
             {Object.entries(PRESETS).map(([k, p]) => (
-              <button key={k} className="preset-btn" onClick={() => applyPreset(k)}
+              <button
+                key={k}
+                className="preset-btn"
+                onClick={() => applyPreset(k)}
                 style={{
-                  background: activePreset === k ? (dark ? "rgba(99,255,180,0.1)" : "rgba(15,122,78,0.1)") : "transparent",
+                  background: activePreset === k
+                    ? (dark ? "rgba(99,255,180,0.1)" : "rgba(15,122,78,0.1)")
+                    : "transparent",
                   borderColor: activePreset === k ? accent : cardBorder,
-                  color: activePreset === k ? accent : dark ? "#a0aec0" : "#4a5568",
-                }}>
+                  color:       activePreset === k ? accent : textMuted,
+                }}
+              >
                 {p.label}
               </button>
             ))}
           </div>
         </div>
 
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 360px", gap: 24, alignItems: "start" }}>
+        {/* ── Main grid ── */}
+        <div style={{
+          display: "grid", gridTemplateColumns: "1fr 360px",
+          gap: 24, alignItems: "start",
+        }}>
 
           {/* Feature inputs */}
-          <div style={{ border: `1px solid ${cardBorder}`, borderRadius: 4, padding: 24, background: cardBg }}>
+          <div style={{
+            border: `1px solid ${cardBorder}`, borderRadius: 4,
+            padding: 24, background: cardBg,
+          }}>
             <p className="section-label">Network Traffic Features</p>
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
               {FIELDS.map((f) => (
                 <div key={f.key}>
-                  <label style={{ display: "block", fontSize: 11, opacity: 0.5, marginBottom: 5, letterSpacing: "0.04em" }}>
+                  <label style={{
+                    display: "block", fontSize: 11, opacity: 0.5,
+                    marginBottom: 5, letterSpacing: "0.04em",
+                    // Highlight the 6 key indicator fields
+                    color: (HIGHLIGHT_FEATURE_KEYS as readonly string[]).includes(f.key)
+                      ? (dark ? accent : "#0f7a4e")
+                      : "inherit",
+                  }}>
+                    {(HIGHLIGHT_FEATURE_KEYS as readonly string[]).includes(f.key) && (
+                      <span style={{ marginRight: 4 }}>★</span>
+                    )}
                     {f.label}
                   </label>
-                  <input type="number" className="field-input" value={formData[f.key] ?? 0}
-                    onChange={(e) => handleChange(f.key, e.target.value)} />
+                  <input
+                    type="number"
+                    className="field-input"
+                    value={formData[f.key] ?? 0}
+                    onChange={(e) => handleChange(f.key, e.target.value)}
+                    style={{
+                      borderColor: (HIGHLIGHT_FEATURE_KEYS as readonly string[]).includes(f.key) && result
+                        ? (dark ? accent + "60" : "#0f7a4e60")
+                        : undefined,
+                    }}
+                  />
                 </div>
               ))}
+            </div>
+            <div style={{ marginTop: 14, fontSize: 11, opacity: 0.35, fontFamily: "'IBM Plex Mono', monospace" }}>
+              ★ = key indicators used in AI report
             </div>
           </div>
 
@@ -237,16 +372,28 @@ export default function PredictPage() {
           <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
 
             {/* Payload preview */}
-            <div style={{ border: `1px solid ${cardBorder}`, borderRadius: 4, padding: 20, background: cardBg }}>
-              <p className="section-label">Request Payload</p>
-              <pre style={{ fontSize: 11, lineHeight: 1.7, opacity: 0.6, maxHeight: 200, overflowY: "auto", fontFamily: "'IBM Plex Mono', monospace" }}>
-                {JSON.stringify({ data: formData }, null, 2).slice(0, 600)}...
+            <div style={{
+              border: `1px solid ${cardBorder}`, borderRadius: 4,
+              padding: 20, background: cardBg,
+            }}>
+              <p className="section-label">Request Payload Preview</p>
+              <pre style={{
+                fontSize: 11, lineHeight: 1.7, opacity: 0.55,
+                maxHeight: 180, overflowY: "auto",
+                fontFamily: "'IBM Plex Mono', monospace",
+              }}>
+                {JSON.stringify({ data: formData }, null, 2).slice(0, 500)}
+                {"\n..."}
               </pre>
             </div>
 
-            {/* Classify */}
-            <button className="submit-btn" onClick={handleSubmit} disabled={loading}
-              style={{ background: dark ? "#63ffb4" : "#0f7a4e", color: dark ? "#080c10" : "#fff" }}>
+            {/* Classify button */}
+            <button
+              className="submit-btn"
+              onClick={handleSubmit}
+              disabled={loading}
+              style={{ background: dark ? "#63ffb4" : "#0f7a4e", color: dark ? "#080c10" : "#fff" }}
+            >
               {loading ? (
                 <span style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }}>
                   <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"
@@ -258,47 +405,97 @@ export default function PredictPage() {
               ) : "→ CLASSIFY TRAFFIC"}
             </button>
 
-            {/* Error */}
+            {/* Error display */}
             {error && (
-              <div style={{ background: dark ? "rgba(255,107,107,0.08)" : "rgba(204,0,0,0.06)", border: `1px solid ${dark ? "rgba(255,107,107,0.2)" : "rgba(204,0,0,0.2)"}`, borderRadius: 4, padding: "14px 16px", fontSize: 12, color: dark ? "#ff6b6b" : "#cc0000" }}>
-                ⚠ {error}
+              <div
+                className="error-box"
+                style={{
+                  background: dark ? "rgba(255,107,107,0.08)" : "rgba(204,0,0,0.06)",
+                  border: `1px solid ${dark ? "rgba(255,107,107,0.25)" : "rgba(204,0,0,0.2)"}`,
+                  color: dark ? "#ff6b6b" : "#cc0000",
+                }}
+              >
+                <span style={{ fontSize: 14, flexShrink: 0 }}>⚠</span>
+                <div>
+                  <div style={{ fontWeight: 600, marginBottom: 4 }}>Prediction Failed</div>
+                  <div style={{ opacity: 0.85 }}>{error}</div>
+                  <div style={{ marginTop: 8, opacity: 0.6 }}>
+                    Check that FastAPI is running: <code>uvicorn app:app --reload</code>
+                  </div>
+                </div>
               </div>
             )}
 
-            {/* ── Result card with investigation button ── */}
+            {/* ── Result card ── */}
             {result && resultMeta && (
-              <div className="result-card" style={{
-                border: `1px solid ${dark ? resultMeta.darkColor + "40" : resultMeta.color + "30"}`,
-                borderRadius: 4, overflow: "hidden",
-                background: dark ? resultMeta.darkColor + "08" : resultMeta.color + "04",
-              }}>
-
+              <div
+                className="result-card"
+                style={{
+                  border: `1px solid ${dark ? resultMeta.darkColor + "40" : resultMeta.color + "30"}`,
+                  borderRadius: 4, overflow: "hidden",
+                  background: dark ? resultMeta.darkColor + "08" : resultMeta.color + "04",
+                }}
+              >
                 {/* Attack header */}
-                <div style={{ padding: "20px 20px 16px", borderBottom: `1px solid ${dark ? resultMeta.darkColor + "20" : resultMeta.color + "15"}` }}>
-                  <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 8 }}>
+                <div style={{
+                  padding: "20px 20px 16px",
+                  borderBottom: `1px solid ${dark ? resultMeta.darkColor + "20" : resultMeta.color + "15"}`,
+                }}>
+                  <div style={{ display: "flex", alignItems: "flex-start", gap: 12, marginBottom: 10 }}>
                     <span style={{ fontSize: 28 }}>{resultMeta.icon}</span>
-                    <div>
-                      <div style={{ fontSize: 10, opacity: 0.45, letterSpacing: "0.12em", marginBottom: 3 }}>DETECTED ATTACK</div>
-                      <div style={{ fontFamily: "'Space Grotesk', sans-serif", fontSize: 22, fontWeight: 700, color: dark ? resultMeta.darkColor : resultMeta.color, letterSpacing: "-0.02em" }}>
+                    <div style={{ flex: 1 }}>
+                      <div style={{ fontSize: 10, opacity: 0.45, letterSpacing: "0.12em", marginBottom: 3 }}>
+                        DETECTED ATTACK
+                      </div>
+                      <div style={{
+                        fontFamily: "'Space Grotesk', sans-serif",
+                        fontSize: 22, fontWeight: 700,
+                        color: dark ? resultMeta.darkColor : resultMeta.color,
+                        letterSpacing: "-0.02em",
+                      }}>
                         {resultMeta.label}
                       </div>
                     </div>
+                    {/* Severity badge */}
+                    <span
+                      className="severity-badge"
+                      style={{
+                        background: SEVERITY_COLOR[resultMeta.severity] + "20",
+                        color:      SEVERITY_COLOR[resultMeta.severity],
+                        border:     `1px solid ${SEVERITY_COLOR[resultMeta.severity]}40`,
+                      }}
+                    >
+                      {resultMeta.severity}
+                    </span>
                   </div>
                   <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 11, opacity: 0.4 }}>
-                    <div style={{ width: 5, height: 5, borderRadius: "50%", background: dark ? resultMeta.darkColor : resultMeta.color, animation: "pulse 2s infinite" }} />
+                    <div style={{
+                      width: 5, height: 5, borderRadius: "50%",
+                      background: dark ? resultMeta.darkColor : resultMeta.color,
+                      animation: "pulse 2s infinite",
+                    }} />
                     XGBoost · raw: <code style={{ fontFamily: "inherit" }}>{result.prediction}</code>
                   </div>
                 </div>
 
-                {/* Key indicators summary */}
+                {/* Key indicators summary (only the 6 highlight fields) */}
                 <div style={{ padding: "12px 20px" }}>
-                  <div style={{ fontSize: 10, letterSpacing: "0.12em", opacity: 0.4, marginBottom: 8 }}>KEY TRAFFIC INDICATORS</div>
-                  {HIGHLIGHT_FIELDS.filter((k) => formData[k] !== undefined).map((k) => {
+                  <div style={{ fontSize: 10, letterSpacing: "0.12em", opacity: 0.4, marginBottom: 8 }}>
+                    KEY TRAFFIC INDICATORS ★
+                  </div>
+                  {HIGHLIGHT_FEATURE_KEYS.filter((k) => formData[k] !== undefined).map((k) => {
                     const field = FIELDS.find((f) => f.key === k);
                     return (
-                      <div key={k} className="stat-row" style={{ borderColor: dark ? "rgba(255,255,255,0.05)" : "rgba(0,0,0,0.06)" }}>
-                        <span style={{ opacity: 0.55 }}>{field?.label || k}</span>
-                        <span style={{ color: dark ? resultMeta.darkColor : resultMeta.color, fontWeight: 500 }}>
+                      <div
+                        key={k}
+                        className="stat-row"
+                        style={{ borderColor: dark ? "rgba(255,255,255,0.05)" : "rgba(0,0,0,0.06)" }}
+                      >
+                        <span style={{ opacity: 0.55 }}>{field?.label ?? k}</span>
+                        <span style={{
+                          color: dark ? resultMeta.darkColor : resultMeta.color,
+                          fontWeight: 600,
+                        }}>
                           {formData[k].toLocaleString()}
                         </span>
                       </div>
@@ -306,38 +503,60 @@ export default function PredictPage() {
                   })}
                 </div>
 
-                {/* ── Investigation CTA ── */}
+                {/* Investigate CTA */}
                 <div style={{ padding: "4px 20px 20px", display: "flex", flexDirection: "column", gap: 8 }}>
                   <button
                     className="investigate-btn"
                     onClick={handleViewThreatDetails}
+                    disabled={navigating}
                     style={{
-                      background: dark ? resultMeta.darkColor + "15" : resultMeta.color + "10",
-                      borderColor: dark ? resultMeta.darkColor + "50" : resultMeta.color + "40",
-                      color: dark ? resultMeta.darkColor : resultMeta.color,
+                      background:   dark ? resultMeta.darkColor + "15" : resultMeta.color + "10",
+                      borderColor:  dark ? resultMeta.darkColor + "50" : resultMeta.color + "40",
+                      color:        dark ? resultMeta.darkColor : resultMeta.color,
                     }}
                   >
-                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                      <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
-                      <polyline points="14,2 14,8 20,8" /><line x1="16" y1="13" x2="8" y2="13" /><line x1="16" y1="17" x2="8" y2="17" />
-                    </svg>
-                    GENERATE AI INVESTIGATION REPORT
-                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                      <path d="M5 12h14M12 5l7 7-7 7" />
-                    </svg>
+                    {navigating ? (
+                      <>
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"
+                          style={{ animation: "spin 1s linear infinite" }}>
+                          <path d="M21 12a9 9 0 1 1-6.219-8.56" />
+                        </svg>
+                        LOADING ANALYZER...
+                      </>
+                    ) : (
+                      <>
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                          <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+                          <polyline points="14,2 14,8 20,8" />
+                          <line x1="16" y1="13" x2="8" y2="13" />
+                          <line x1="16" y1="17" x2="8" y2="17" />
+                        </svg>
+                        VIEW THREAT DETAILS
+                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                          <path d="M5 12h14M12 5l7 7-7 7" />
+                        </svg>
+                      </>
+                    )}
                   </button>
-                  <div style={{ fontSize: 10, opacity: 0.3, textAlign: "center", letterSpacing: "0.04em" }}>
-                    Passes all traffic features + prediction to RAG + LLaMA3
+
+                  <div className="compact-note">
+                    Sends compact prompt (6 key indicators only) to RAG + LLaMA3<br />
+                    Prevents ECONNRESET / socket hang-up
                   </div>
                 </div>
               </div>
             )}
 
             {/* Endpoint info */}
-            <div style={{ border: `1px solid ${cardBorder}`, borderRadius: 4, padding: 16, background: cardBg, fontSize: 11, opacity: 0.5, lineHeight: 1.8 }}>
+            <div style={{
+              border: `1px solid ${cardBorder}`, borderRadius: 4,
+              padding: 16, background: cardBg,
+              fontSize: 11, opacity: 0.45, lineHeight: 1.8,
+              fontFamily: "'IBM Plex Mono', monospace",
+            }}>
               <div style={{ marginBottom: 6, letterSpacing: "0.1em", opacity: 0.7 }}>ENDPOINT</div>
               <code>POST http://localhost:8000/predict</code><br />
-              <code>Body: {"{'data': {...features}}"}</code>
+              <code>Body: {`{"data": {...features}}`}</code>
             </div>
           </div>
         </div>
