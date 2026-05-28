@@ -9,7 +9,9 @@ from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_ollama import OllamaLLM
 
 
-llm = OllamaLLM(model="llama3")
+llm = OllamaLLM(
+    model="tinyllama"
+)
 
 
 loader = DirectoryLoader(

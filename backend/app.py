@@ -62,8 +62,7 @@ app.add_middleware(
 #
 #llm = OllamaLLM(model="llama3", timeout=80)
 llm = OllamaLLM(
-    model="tinyllama",
-    temperature=0.2
+    model="tinyllama"
 )
 
 embedding_model = HuggingFaceEmbeddings(
