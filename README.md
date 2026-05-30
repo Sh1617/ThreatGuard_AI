@@ -186,7 +186,7 @@ Backend health monitoring.
 ## Clone Repository
 
 ```bash
-git clone https://github.com/your-username/ThreatGuard-AI.git
+git clone https://github.com/Sh1617/ThreatGuard-AI.git
 
 cd ThreatGuard-AI
 ```
